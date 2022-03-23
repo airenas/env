@@ -1448,6 +1448,74 @@ func TestComplePrefix(t *testing.T) {
 	isEqual(t, "blahhh", cfg.Blah)
 }
 
+func TestKeyFromName(t *testing.T) {
+	type Config struct {
+		Home string
+	}
+	cfg := Config{}
+	isNoErr(t, Parse(&cfg, Options{
+		ExtractKey: KeyFromTagOrName,
+		Environment: map[string]string{
+			"HOME": "/foo",
+		},
+	}))
+	isEqual(t, "/foo", cfg.Home)
+	cfg = Config{}
+	isNoErr(t, Parse(&cfg, Options{
+		Environment: map[string]string{
+			"HOME": "/foo",
+		},
+	}))
+	isEqual(t, "", cfg.Home)
+}
+
+func TestKeyFromNameCustomFunc(t *testing.T) {
+	type Config struct {
+		Home string
+	}
+	cfg := Config{}
+	isNoErr(t, Parse(&cfg, Options{
+		ExtractKey: func(field reflect.StructField, opts []Options) (string, []string) {
+			return strings.ToUpper(strings.ReplaceAll(field.Name, "", "_")), nil
+		},
+		Environment: map[string]string{
+			"_H_O_M_E_": "/foo",
+		},
+	}))
+	isEqual(t, "/foo", cfg.Home)
+}
+
+func TestComplexKeyFromName(t *testing.T) {
+	type Config struct {
+		Home    string
+		EnvHome string `env:"SOMEHOME"`
+	}
+	type CompexConfig struct {
+		Cfg  Config
+		Cfg2 Config `envPrefix:"OLIA_"`
+	}
+	cfg := CompexConfig{}
+	isNoErr(t, Parse(&cfg, Options{
+		ExtractKey:    KeyFromTagOrName,
+		ExtractPrefix: KeyPrefixFromTagOrName,
+		Environment: map[string]string{
+			"CFG_HOME":     "/foo",
+			"CFG_SOMEHOME": "/bar",
+			"OLIA_HOME":    "/foo2",
+		},
+	}))
+	isEqual(t, "/foo", cfg.Cfg.Home)
+	isEqual(t, "/bar", cfg.Cfg.EnvHome)
+	isEqual(t, "/foo2", cfg.Cfg2.Home)
+	cfg = CompexConfig{}
+	isNoErr(t, Parse(&cfg, Options{
+		Environment: map[string]string{
+			"CFG_HOME": "/foo",
+		},
+	}))
+	isEqual(t, "", cfg.Cfg.Home)
+}
+
 func isTrue(tb testing.TB, b bool) {
 	tb.Helper()
 

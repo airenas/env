@@ -97,6 +97,12 @@ type ParserFunc func(v string) (interface{}, error)
 // OnSetFn is a hook that can be run when a value is set.
 type OnSetFn func(tag string, value interface{}, isDefault bool)
 
+// KeyTagsFunc defines function that returns key and tags for a field.
+type KeyTagsFunc func(field reflect.StructField, opts []Options) (string, []string)
+
+// KeyPrefixFunc defines function to return env prefix for a field.
+type KeyPrefixFunc func(field reflect.StructField, opts []Options) string
+
 // Options for the parser.
 type Options struct {
 	// Environment keys and values that will be accessible for the service.
@@ -114,6 +120,14 @@ type Options struct {
 	// Prefix define a prefix for each key
 	Prefix string
 
+	// ExtractKey allows to customize how to extract key, tags for a field
+	// default: extract from a tag `env` or as provided in `TagName`
+	ExtractKey KeyTagsFunc
+
+	// ExtractPrefix allows to customize how to get env prefix for a field
+	// default: extract from a tag named `envPrefix`
+	ExtractPrefix KeyPrefixFunc
+
 	// Sets to true if we have already configured once.
 	configured bool
 }
@@ -128,9 +142,11 @@ func configure(opts []Options) []Options {
 
 	// Created options with defaults.
 	opt := Options{
-		TagName:     "env",
-		Environment: toMap(os.Environ()),
-		configured:  true,
+		TagName:       "env",
+		Environment:   toMap(os.Environ()),
+		configured:    true,
+		ExtractKey:    KeyFromTag,
+		ExtractPrefix: KeyPrefixFromTag,
 	}
 
 	// Loop over all opts structs and set
@@ -149,6 +165,12 @@ func configure(opts []Options) []Options {
 			opt.Prefix = item.Prefix
 		}
 		opt.RequiredIfNoDef = item.RequiredIfNoDef
+		if item.ExtractKey != nil {
+			opt.ExtractKey = item.ExtractKey
+		}
+		if item.ExtractPrefix != nil {
+			opt.ExtractPrefix = item.ExtractPrefix
+		}
 	}
 
 	return []Options{opt}
@@ -250,7 +272,7 @@ func get(field reflect.StructField, opts []Options) (val string, err error) {
 
 	required := opts[0].RequiredIfNoDef
 	prefix := opts[0].Prefix
-	key, tags := parseKeyForOption(field.Tag.Get(getTagName(opts)))
+	key, tags := opts[0].ExtractKey(field, opts)
 	key = prefix + key
 	for _, tag := range tags {
 		switch tag {
@@ -302,10 +324,19 @@ func get(field reflect.StructField, opts []Options) (val string, err error) {
 	return val, err
 }
 
-// split the env tag's key into the expected key and desired option, if any.
-func parseKeyForOption(key string) (string, []string) {
-	opts := strings.Split(key, ",")
-	return opts[0], opts[1:]
+// KeyFromTag extracts env key and desired options from specified field's tag.
+func KeyFromTag(field reflect.StructField, opts []Options) (string, []string) {
+	key := field.Tag.Get(getTagName(opts))
+	tags := strings.Split(key, ",")
+	return tags[0], tags[1:]
+}
+
+// KeyFromTagOrName extracts key and options from tag or uses field's name as key value.
+func KeyFromTagOrName(field reflect.StructField, opts []Options) (string, []string) {
+	if _, ok := field.Tag.Lookup(getTagName(opts)); ok {
+		return KeyFromTag(field, opts)
+	}
+	return strings.ToUpper(field.Name), nil
 }
 
 func getFromFile(filename string) (value string, err error) {
@@ -475,8 +506,19 @@ func newNoParserError(sf reflect.StructField) error {
 func optsWithPrefix(field reflect.StructField, opts []Options) []Options {
 	subOpts := make([]Options, len(opts))
 	copy(subOpts, opts)
-	if prefix := field.Tag.Get("envPrefix"); prefix != "" {
-		subOpts[0].Prefix += prefix
-	}
+	subOpts[0].Prefix += opts[0].ExtractPrefix(field, opts)
 	return subOpts
+}
+
+// KeyPrefixFromTag function for extracting env prefix from `envPrefix` tag
+func KeyPrefixFromTag(field reflect.StructField, opts []Options) string {
+	return field.Tag.Get("envPrefix")
+}
+
+// KeyPrefixFromTag function for extracting env prefix from `envPrefix` tag or using field's name
+func KeyPrefixFromTagOrName(field reflect.StructField, opts []Options) string {
+	if prefix, ok := field.Tag.Lookup("envPrefix"); ok {
+		return prefix
+	}
+	return strings.ToUpper(field.Name) + "_"
 }
